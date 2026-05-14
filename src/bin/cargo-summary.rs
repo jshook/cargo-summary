@@ -683,8 +683,7 @@ fn open_log_files(
     }
     let ts = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0);
+        .map_or(0, |d| d.as_millis());
     let stdout_path = log_dir.join(format!("{mode}-{ts}.stdout.log"));
     let stderr_path = log_dir.join(format!("{mode}-{ts}.stderr.log"));
     let stdout_file = OpenOptions::new()
