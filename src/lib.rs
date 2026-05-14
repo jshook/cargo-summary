@@ -463,11 +463,11 @@ pub fn summarize_test_nextest(
                     ignored += s.ignored;
                     suite_seen = true;
                 }
-                NextestEvent::Test(t) if t.event == "failed" => {
-                    if failure_names.len() < MAX_FAILURE_NAMES {
-                        let name = t.name.split('$').next_back().unwrap_or(&t.name).to_string();
-                        failure_names.push(name);
-                    }
+                NextestEvent::Test(t)
+                    if t.event == "failed" && failure_names.len() < MAX_FAILURE_NAMES =>
+                {
+                    let name = t.name.split('$').next_back().unwrap_or(&t.name).to_string();
+                    failure_names.push(name);
                 }
                 _ => {}
             }
@@ -539,18 +539,18 @@ pub fn summarize_test_legacy(stdout: &[String], stderr: &[String], ok: bool, sec
         if let Some(rest) = line.strip_prefix("test result: ") {
             for token in rest.split(';') {
                 let token = token.trim();
-                if let Some(rest) = token.strip_suffix(" passed") {
-                    if let Some(num) = rest.split_whitespace().last() {
-                        passed += num.parse::<u64>().unwrap_or(0);
-                    }
-                } else if let Some(rest) = token.strip_suffix(" failed") {
-                    if let Some(num) = rest.split_whitespace().last() {
-                        failed += num.parse::<u64>().unwrap_or(0);
-                    }
-                } else if let Some(rest) = token.strip_suffix(" ignored") {
-                    if let Some(num) = rest.split_whitespace().last() {
-                        ignored += num.parse::<u64>().unwrap_or(0);
-                    }
+                if let Some(rest) = token.strip_suffix(" passed")
+                    && let Some(num) = rest.split_whitespace().next_back()
+                {
+                    passed += num.parse::<u64>().unwrap_or(0);
+                } else if let Some(rest) = token.strip_suffix(" failed")
+                    && let Some(num) = rest.split_whitespace().next_back()
+                {
+                    failed += num.parse::<u64>().unwrap_or(0);
+                } else if let Some(rest) = token.strip_suffix(" ignored")
+                    && let Some(num) = rest.split_whitespace().next_back()
+                {
+                    ignored += num.parse::<u64>().unwrap_or(0);
                 }
             }
         }
