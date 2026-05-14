@@ -54,6 +54,7 @@ impl SubcommandKind {
 
     /// Map a cargo subcommand name to its `SubcommandKind`. Returns
     /// `None` for any subcommand cargo-summary does not summarize.
+    #[must_use]
     pub fn for_name(name: &str) -> Option<Self> {
         match name {
             "build" => Some(Self::Build),
@@ -66,7 +67,8 @@ impl SubcommandKind {
 
     /// The all-caps label used in summary lines (`BUILD`, `TEST`,
     /// etc.).
-    pub fn mode_label(&self) -> &'static str {
+    #[must_use]
+    pub const fn mode_label(&self) -> &'static str {
         match self {
             Self::Build => "BUILD",
             Self::Check => "CHECK",
@@ -101,6 +103,7 @@ pub struct CargoVersion {
 impl CargoVersion {
     /// Parse the first line of `cargo --version` output. Returns
     /// `None` on any malformed input.
+    #[must_use]
     pub fn parse(s: &str) -> Option<Self> {
         let token = s.split_whitespace().nth(1)?;
         let core = token.split('-').next()?;
@@ -117,6 +120,7 @@ impl CargoVersion {
 }
 
 /// Detect the installed cargo's version by invoking `cargo --version`.
+///
 /// Cached after the first successful detection; subsequent calls are
 /// free. Returns `None` if cargo is missing or its output is unparseable.
 pub fn cargo_version() -> Option<CargoVersion> {
@@ -160,6 +164,7 @@ pub fn nextest_version() -> Option<String> {
 /// `true` iff `cargo-nextest` is callable. Used by the CLI to decide
 /// whether to route the `test` subcommand through the nextest JSON
 /// path.
+#[must_use]
 pub fn cargo_nextest_available() -> bool {
     nextest_version().is_some()
 }
@@ -250,7 +255,8 @@ pub enum TestRunner {
 impl TestRunner {
     /// The short tag that appears at the end of test summary lines
     /// (`[nextest]` or `[legacy]`).
-    pub fn tag(&self) -> &'static str {
+    #[must_use]
+    pub const fn tag(&self) -> &'static str {
         match self {
             Self::Nextest => "nextest",
             Self::Legacy => "legacy",
@@ -262,6 +268,12 @@ impl Summary {
     /// Render this summary as the single line cargo-summary emits.
     /// The `logs.stdout=` / `logs.stderr=` suffix is appended by the
     /// CLI after this call; this function returns only the body.
+    // A single match over the Summary variants; each arm is the
+    // canonical wire form for one line shape. Splitting into helpers
+    // would scatter the format across the file without improving
+    // legibility.
+    #[allow(clippy::too_many_lines)]
+    #[must_use]
     pub fn render(&self) -> String {
         match self {
             Self::BuildOk {
@@ -270,7 +282,7 @@ impl Summary {
                 elapsed_secs,
             } => {
                 let warns = if *warnings > 0 {
-                    format!(" warnings={}", warnings)
+                    format!(" warnings={warnings}")
                 } else {
                     String::new()
                 };
@@ -357,7 +369,7 @@ impl Summary {
             Self::ClippyOk {
                 warnings,
                 elapsed_secs,
-            } => format!("CLIPPY OK warnings={} in {:.1}s", warnings, elapsed_secs),
+            } => format!("CLIPPY OK warnings={warnings} in {elapsed_secs:.1}s"),
             Self::ClippyFailed {
                 warnings,
                 diagnostics,
@@ -368,18 +380,12 @@ impl Summary {
                 } else {
                     diagnostics.join(" | ")
                 };
-                format!(
-                    "CLIPPY FAILED warnings={} in {:.1}s [{}]",
-                    warnings, elapsed_secs, body
-                )
+                format!("CLIPPY FAILED warnings={warnings} in {elapsed_secs:.1}s [{body}]")
             }
             Self::Timeout {
                 elapsed_secs,
                 limit_secs,
-            } => format!(
-                "TIMEOUT after {:.1}s (limit {}s) -- child killed",
-                elapsed_secs, limit_secs
-            ),
+            } => format!("TIMEOUT after {elapsed_secs:.1}s (limit {limit_secs}s) -- child killed"),
         }
     }
 }
@@ -438,6 +444,7 @@ pub const MAX_DIAGNOSTIC_LINES: usize = 6;
 /// let out = summarize_test_nextest(&stdout, &[], true, 0.5);
 /// assert_eq!(out.render(), "TEST OK total=4 passed=3 failed=0 ignored=1 in 0.5s [nextest]");
 /// ```
+#[must_use]
 pub fn summarize_test_nextest(
     stdout: &[String],
     stderr: &[String],
@@ -528,6 +535,7 @@ pub fn summarize_test_nextest(
 /// let out = summarize_test_legacy(&stdout, &[], true, 1.0);
 /// assert_eq!(out.render(), "TEST OK total=6 passed=5 failed=0 ignored=1 in 1.0s [legacy]");
 /// ```
+#[must_use]
 pub fn summarize_test_legacy(stdout: &[String], stderr: &[String], ok: bool, secs: f64) -> Summary {
     let mut passed = 0u64;
     let mut failed = 0u64;
@@ -617,6 +625,7 @@ pub fn summarize_test_legacy(stdout: &[String], stderr: &[String], ok: bool, sec
 /// let out = summarize_build(&stderr, true, 2.5, SubcommandKind::Build);
 /// assert_eq!(out.render(), "BUILD OK warnings=2 in 2.5s");
 /// ```
+#[must_use]
 pub fn summarize_build(stderr: &[String], ok: bool, secs: f64, kind: SubcommandKind) -> Summary {
     if ok {
         let warnings = stderr.iter().filter(|l| l.starts_with("warning:")).count() as u64;
@@ -649,6 +658,7 @@ pub fn summarize_build(stderr: &[String], ok: bool, secs: f64, kind: SubcommandK
 /// let out = summarize_clippy(&[], true, 0.7);
 /// assert_eq!(out.render(), "CLIPPY OK warnings=0 in 0.7s");
 /// ```
+#[must_use]
 pub fn summarize_clippy(stderr: &[String], ok: bool, secs: f64) -> Summary {
     let warn_count = stderr.iter().filter(|l| l.starts_with("warning:")).count() as u64;
     if ok {
@@ -685,10 +695,11 @@ pub fn summarize_clippy(stderr: &[String], ok: bool, secs: f64) -> Summary {
 // Path relativization
 // ============================================================================
 
-/// Make `path` relative to the current working directory, if
-/// possible. Falls back to the input unchanged when the CWD is not
-/// available or the two paths cannot share a root (e.g. different
-/// Windows drives).
+/// Make `path` relative to the current working directory, if possible.
+///
+/// Falls back to the input unchanged when the CWD is not available or
+/// the two paths cannot share a root (e.g. different Windows drives).
+#[must_use]
 pub fn relativize_to_cwd(path: &Path) -> PathBuf {
     let Ok(cwd) = std::env::current_dir() else {
         return path.to_path_buf();
@@ -696,10 +707,11 @@ pub fn relativize_to_cwd(path: &Path) -> PathBuf {
     relativize_against(path, &cwd)
 }
 
-/// Compute `path` relative to `base`. When the target lives under
-/// the base, the result is a subpath; otherwise the result uses
-/// `..` to ascend out of `base` to a shared ancestor. Paths with no
-/// shared root anchor are returned unchanged.
+/// Compute `path` relative to `base`.
+///
+/// When the target lives under the base, the result is a subpath;
+/// otherwise the result uses `..` to ascend out of `base` to a shared
+/// ancestor. Paths with no shared root anchor are returned unchanged.
 ///
 /// ```
 /// use cargo_summary::relativize_against;
@@ -721,6 +733,7 @@ pub fn relativize_to_cwd(path: &Path) -> PathBuf {
 /// let p = Path::new("/a/b");
 /// assert_eq!(relativize_against(p, p), PathBuf::from("."));
 /// ```
+#[must_use]
 pub fn relativize_against(path: &Path, base: &Path) -> PathBuf {
     if let Ok(rel) = path.strip_prefix(base) {
         return if rel.as_os_str().is_empty() {
@@ -904,6 +917,7 @@ pub const OUTPUT_DOC_SCHEMA: &str = r##"{
 /// Per-subcommand documentation, including the exact cargo
 /// invocation cargo-summary runs and which summary kinds it can
 /// produce.
+#[must_use]
 pub fn subcommand_docs() -> Vec<SubcommandDoc> {
     vec![
         SubcommandDoc {
@@ -934,7 +948,8 @@ pub fn subcommand_docs() -> Vec<SubcommandDoc> {
 }
 
 /// Log-capture metadata for the output document.
-pub fn log_capture_doc() -> LogCaptureDoc {
+#[must_use]
+pub const fn log_capture_doc() -> LogCaptureDoc {
     LogCaptureDoc {
         description: "When the wrapper can create log files, every summary line ends with a logs suffix pointing at the captured stdout/stderr. Omitted on failure to create files. Paths are rendered relative to the process CWD by default; pass --absolute-log-paths for absolute paths.",
         suffix_grammar: " logs.stdout=<cwd-relative-path> logs.stderr=<cwd-relative-path>",
@@ -945,6 +960,10 @@ pub fn log_capture_doc() -> LogCaptureDoc {
 /// Documentation entries for every summary line shape. Each entry's
 /// examples are produced by [`Summary::render`], so they cannot
 /// drift from the live renderer.
+// Data table; one entry per line shape. Length is inherent to the
+// number of line shapes documented, not function complexity.
+#[allow(clippy::too_many_lines)]
+#[must_use]
 pub fn output_doc_lines() -> Vec<LineDoc> {
     vec![
         LineDoc {
@@ -1272,7 +1291,9 @@ pub fn output_doc_lines() -> Vec<LineDoc> {
 
 /// Render the human-readable form of the output documentation (the
 /// content of `cargo summary --describe-output`).
+#[must_use]
 pub fn output_doc_text(wrapper_version: &str) -> String {
+    use std::fmt::Write as _;
     let mut out = String::new();
     out.push_str("cargo-summary output description (doc version ");
     out.push_str(OUTPUT_DOC_VERSION);
@@ -1330,7 +1351,7 @@ pub fn output_doc_text(wrapper_version: &str) -> String {
                 } else {
                     format!(" - {}", f.description)
                 };
-                out.push_str(&format!("        {}: {}{}{}\n", f.name, f.ty, opt, desc));
+                let _ = writeln!(out, "        {}: {}{}{}", f.name, f.ty, opt, desc);
             }
         }
         out.push_str("    Examples:\n");
@@ -1346,6 +1367,7 @@ pub fn output_doc_text(wrapper_version: &str) -> String {
 
 /// Build the full output documentation document (the content of
 /// `cargo summary --describe-output-json` after pretty-printing).
+#[must_use]
 pub fn output_doc(wrapper_version: &'static str) -> OutputDoc {
     OutputDoc {
         schema: OUTPUT_DOC_SCHEMA_URN,
@@ -1358,6 +1380,15 @@ pub fn output_doc(wrapper_version: &'static str) -> OutputDoc {
 }
 
 /// Render the output documentation as pretty-printed JSON.
+///
+/// # Panics
+///
+/// Panics if the embedded [`OutputDoc`] cannot be serialized. This is
+/// structurally impossible -- every field is a known type with a
+/// working `Serialize` impl over static data -- so the panic exists
+/// only to surface a programmer error if the schema ever drifts from
+/// what `serde` can handle.
+#[must_use]
 pub fn output_doc_json(wrapper_version: &'static str) -> String {
     serde_json::to_string_pretty(&output_doc(wrapper_version)).expect("output doc is serializable")
 }
@@ -1371,7 +1402,7 @@ mod tests {
     use super::*;
 
     fn s(strs: &[&str]) -> Vec<String> {
-        strs.iter().map(|s| s.to_string()).collect()
+        strs.iter().map(std::string::ToString::to_string).collect()
     }
 
     // ---- Subcommand classification ----
@@ -1381,16 +1412,14 @@ mod tests {
         for n in SubcommandKind::ALL_NAMES {
             assert!(
                 SubcommandKind::for_name(n).is_some(),
-                "name {} not classifiable",
-                n
+                "name {n} not classifiable"
             );
         }
         for n in ["run", "doc", "fmt", "bench", "", "BUILD", " test"] {
             assert_eq!(
                 SubcommandKind::for_name(n),
                 None,
-                "name {:?} was unexpectedly classifiable",
-                n
+                "name {n:?} was unexpectedly classifiable"
             );
         }
     }
@@ -1574,8 +1603,7 @@ mod tests {
         .render();
         assert!(
             !s.contains("failures="),
-            "no failure names should not produce a failures= field: {}",
-            s
+            "no failure names should not produce a failures= field: {s}"
         );
     }
 
@@ -1683,7 +1711,7 @@ mod tests {
 
     #[test]
     fn summarize_build_caps_error_lines() {
-        let stderr: Vec<String> = (0..50).map(|i| format!("error: e{}", i)).collect();
+        let stderr: Vec<String> = (0..50).map(|i| format!("error: e{i}")).collect();
         let out = summarize_build(&stderr, false, 1.0, SubcommandKind::Build);
         match out {
             Summary::BuildFailed { errors, .. } => {
@@ -1694,7 +1722,7 @@ mod tests {
                     format!("error: e{}", MAX_DIAGNOSTIC_LINES - 1)
                 );
             }
-            other => panic!("expected BuildFailed, got {:?}", other),
+            other => panic!("expected BuildFailed, got {other:?}"),
         }
     }
 
@@ -1735,7 +1763,7 @@ mod tests {
 
     #[test]
     fn summarize_test_legacy_caps_failure_names_at_eight() {
-        let mut lines: Vec<String> = (0..20).map(|i| format!("test t{} ... FAILED", i)).collect();
+        let mut lines: Vec<String> = (0..20).map(|i| format!("test t{i} ... FAILED")).collect();
         lines.push("test result: FAILED. 0 passed; 20 failed; 0 ignored; 0 measured".to_string());
         let out = summarize_test_legacy(&lines, &[], false, 1.0);
         match out {
@@ -1745,7 +1773,7 @@ mod tests {
                 assert_eq!(failed, 20);
                 assert_eq!(failures.len(), MAX_FAILURE_NAMES);
             }
-            other => panic!("expected TestFailed, got {:?}", other),
+            other => panic!("expected TestFailed, got {other:?}"),
         }
     }
 
@@ -1783,7 +1811,7 @@ mod tests {
             } => {
                 assert_eq!((passed, failed, ignored), (0, 0, 1));
             }
-            other => panic!("expected TestOk, got {:?}", other),
+            other => panic!("expected TestOk, got {other:?}"),
         }
     }
 
@@ -1814,7 +1842,7 @@ mod tests {
     fn summarize_test_nextest_skips_malformed_json_lines() {
         let stdout = s(&[
             "not json at all",
-            r#"{this is invalid json}"#,
+            r"{this is invalid json}",
             r#"{"type":"suite","event":"ok","passed":1,"failed":0,"ignored":0}"#,
             "",
         ]);
@@ -1835,8 +1863,7 @@ mod tests {
         let rendered = out.render();
         assert!(
             rendered.contains("failures=[crate::tests::my_test]"),
-            "got: {}",
-            rendered
+            "got: {rendered}"
         );
         assert!(rendered.contains("[nextest]"));
     }
@@ -1976,7 +2003,7 @@ mod tests {
             .map(|s| s.get("name").and_then(|n| n.as_str()).unwrap_or(""))
             .collect();
         for n in SubcommandKind::ALL_NAMES {
-            assert!(names.contains(n), "subcommand {} missing from doc", n);
+            assert!(names.contains(n), "subcommand {n} missing from doc");
         }
     }
 
@@ -1985,9 +2012,8 @@ mod tests {
         let text = output_doc_text("0.0.0-test");
         for n in SubcommandKind::ALL_NAMES {
             assert!(
-                text.contains(&format!("cargo {}", n)),
-                "missing 'cargo {}' in text doc",
-                n
+                text.contains(&format!("cargo {n}")),
+                "missing 'cargo {n}' in text doc"
             );
         }
     }
@@ -2006,7 +2032,7 @@ mod tests {
             "TIMEOUT",
             "HEARTBEAT",
         ] {
-            assert!(text.contains(label), "output doc missing '{}'", label);
+            assert!(text.contains(label), "output doc missing '{label}'");
         }
     }
 
@@ -2014,9 +2040,9 @@ mod tests {
     fn output_doc_lines_kinds_are_unique() {
         let kinds: Vec<&str> = output_doc_lines().iter().map(|l| l.kind).collect();
         let mut sorted = kinds.clone();
-        sorted.sort();
+        sorted.sort_unstable();
         sorted.dedup();
-        assert_eq!(sorted.len(), kinds.len(), "duplicate kinds: {:?}", kinds);
+        assert_eq!(sorted.len(), kinds.len(), "duplicate kinds: {kinds:?}");
     }
 
     #[test]

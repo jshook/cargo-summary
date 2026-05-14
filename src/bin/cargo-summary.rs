@@ -38,14 +38,14 @@ fn main() -> ExitCode {
     // When invoked as `cargo summary ...`, cargo passes our extension
     // name as argv[1]. Strip it so the parser sees the cargo
     // subcommand as the first non-flag token.
-    if raw_args.first().map(|s| s.as_str()) == Some("summary") {
+    if raw_args.first().map(std::string::String::as_str) == Some("summary") {
         raw_args.remove(0);
     }
 
     let parsed = match parse_args(&raw_args) {
         Ok(p) => p,
         Err(msg) => {
-            eprintln!("{}", msg);
+            eprintln!("{msg}");
             return ExitCode::from(2);
         }
     };
@@ -63,7 +63,7 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
     if parsed.print_output_doc_schema {
-        println!("{}", OUTPUT_DOC_SCHEMA);
+        println!("{OUTPUT_DOC_SCHEMA}");
         return ExitCode::SUCCESS;
     }
     if parsed.print_version_info {
@@ -75,8 +75,8 @@ fn main() -> ExitCode {
     let kind = SubcommandKind::for_name(&subcommand);
 
     match (kind, parsed.wrap_unknown) {
-        (Some(k), _) => run_wrapped(parsed, Some(k)),
-        (None, true) => run_wrapped(parsed, None),
+        (Some(k), _) => run_wrapped(&parsed, Some(k)),
+        (None, true) => run_wrapped(&parsed, None),
         (None, false) => {
             let mut offenders: Vec<&str> = Vec::new();
             if parsed.timeout_secs.is_some() {
@@ -116,6 +116,10 @@ fn main() -> ExitCode {
 // CLI parsing
 // ============================================================================
 
+// Flags collected from argv. Several bool fields are unavoidable for a
+// CLI flags struct; clippy::struct_excessive_bools fires at the count,
+// not the shape.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug)]
 struct ParsedArgs {
     passthrough: bool,
@@ -187,7 +191,7 @@ fn parse_args(raw: &[String]) -> Result<ParsedArgs, String> {
                     .ok_or_else(|| "--timeout requires a value in seconds".to_string())?;
                 let n: u64 = v
                     .parse()
-                    .map_err(|_| format!("--timeout value '{}' is not an integer", v))?;
+                    .map_err(|_| format!("--timeout value '{v}' is not an integer"))?;
                 p.timeout_secs = Some(n);
             }
             "--heartbeat" | "--heartbeat-secs" => {
@@ -197,7 +201,7 @@ fn parse_args(raw: &[String]) -> Result<ParsedArgs, String> {
                     .ok_or_else(|| "--heartbeat requires a value in seconds".to_string())?;
                 let n: u64 = v
                     .parse()
-                    .map_err(|_| format!("--heartbeat value '{}' is not an integer", v))?;
+                    .map_err(|_| format!("--heartbeat value '{v}' is not an integer"))?;
                 p.heartbeat_secs = Some(n);
             }
             "--heartbeat-lines" => {
@@ -207,7 +211,7 @@ fn parse_args(raw: &[String]) -> Result<ParsedArgs, String> {
                     .ok_or_else(|| "--heartbeat-lines requires a line count".to_string())?;
                 let n: u64 = v
                     .parse()
-                    .map_err(|_| format!("--heartbeat-lines value '{}' is not an integer", v))?;
+                    .map_err(|_| format!("--heartbeat-lines value '{v}' is not an integer"))?;
                 p.heartbeat_lines = Some(n);
             }
             _ => {
@@ -232,7 +236,7 @@ fn parse_args(raw: &[String]) -> Result<ParsedArgs, String> {
 }
 
 fn print_help() {
-    let help = r#"cargo-summary -- concise cargo wrapper
+    let help = r"cargo-summary -- concise cargo wrapper
 
 USAGE:
     cargo-summary [tool-flags] <cargo-subcommand> [cargo args...]
@@ -271,20 +275,17 @@ EXAMPLES:
     cargo summary --heartbeat 30 build --release --workspace
     cargo summary --timeout 600 --wrap-unknown doc --workspace
     cargo summary --describe-output           # print the format docs
-"#;
-    eprint!("{}", help);
+";
+    eprint!("{help}");
 }
 
 fn version_info_text() -> String {
-    let cargo = match cargo_version() {
-        Some(v) => format!("{}.{}.{}", v.major, v.minor, v.patch),
-        None => "unavailable".into(),
-    };
+    let cargo = cargo_version().map_or_else(
+        || "unavailable".to_string(),
+        |v| format!("{}.{}.{}", v.major, v.minor, v.patch),
+    );
     let nextest = nextest_version().unwrap_or_else(|| "not installed".into());
-    format!(
-        "cargo-summary {}\ncargo: {}\nnextest: {}\n",
-        WRAPPER_VERSION, cargo, nextest
-    )
+    format!("cargo-summary {WRAPPER_VERSION}\ncargo: {cargo}\nnextest: {nextest}\n")
 }
 
 // ============================================================================
@@ -301,24 +302,29 @@ fn run_raw(cargo_args: &[String]) -> ExitCode {
     match status {
         Ok(s) => s
             .code()
-            .map(|c| ExitCode::from(clamp_exit_code(c)))
-            .unwrap_or(ExitCode::from(1)),
+            .map_or_else(|| ExitCode::from(1), |c| ExitCode::from(clamp_exit_code(c))),
         Err(e) => {
-            eprintln!("cargo-summary: failed to spawn cargo: {}", e);
+            eprintln!("cargo-summary: failed to spawn cargo: {e}");
             ExitCode::from(2)
         }
     }
 }
 
 fn clamp_exit_code(c: i32) -> u8 {
-    if (0..=255).contains(&c) { c as u8 } else { 1 }
+    // Cargo never exits outside [0, 255] in practice; map anything
+    // else to 1 to keep our wrapper's exit code well-typed.
+    u8::try_from(c).unwrap_or(1)
 }
 
 // ============================================================================
 // Wrapped mode pipeline
 // ============================================================================
 
-fn run_wrapped(parsed: ParsedArgs, kind: Option<SubcommandKind>) -> ExitCode {
+// I/O capture pipeline + heartbeat + timeout + summarization, all
+// driven by a single select loop. Splitting into helpers would have
+// to thread an awkward amount of mutable state across the boundary.
+#[allow(clippy::too_many_lines)]
+fn run_wrapped(parsed: &ParsedArgs, kind: Option<SubcommandKind>) -> ExitCode {
     let started = Instant::now();
     let mode = parsed.cargo_args[0].clone();
 
@@ -360,7 +366,7 @@ fn run_wrapped(parsed: ParsedArgs, kind: Option<SubcommandKind>) -> ExitCode {
     let mut child = match cmd.spawn() {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("cargo-summary: failed to spawn cargo: {}", e);
+            eprintln!("cargo-summary: failed to spawn cargo: {e}");
             return ExitCode::from(2);
         }
     };
@@ -407,7 +413,7 @@ fn run_wrapped(parsed: ParsedArgs, kind: Option<SubcommandKind>) -> ExitCode {
             break;
         }
         if let Some(deadline) = parsed.timeout_secs
-            && started.elapsed().as_secs_f64() >= deadline as f64
+            && started.elapsed() >= Duration::from_secs(deadline)
         {
             timed_out = true;
             let _ = child.kill();
@@ -416,10 +422,10 @@ fn run_wrapped(parsed: ParsedArgs, kind: Option<SubcommandKind>) -> ExitCode {
         match event_rx.recv_timeout(select_interval) {
             Ok(Event::Stdout(line)) => {
                 if parsed.passthrough {
-                    let _ = writeln!(std::io::stdout().lock(), "{}", line);
+                    let _ = writeln!(std::io::stdout().lock(), "{line}");
                 }
                 if let Some(f) = stdout_log.as_mut() {
-                    let _ = writeln!(f, "{}", line);
+                    let _ = writeln!(f, "{line}");
                 }
                 if !line.trim().is_empty() {
                     latest_status_line = Some(line.clone());
@@ -429,10 +435,10 @@ fn run_wrapped(parsed: ParsedArgs, kind: Option<SubcommandKind>) -> ExitCode {
             }
             Ok(Event::Stderr(line)) => {
                 if parsed.passthrough {
-                    let _ = writeln!(std::io::stderr().lock(), "{}", line);
+                    let _ = writeln!(std::io::stderr().lock(), "{line}");
                 }
                 if let Some(f) = stderr_log.as_mut() {
-                    let _ = writeln!(f, "{}", line);
+                    let _ = writeln!(f, "{line}");
                 }
                 if !line.trim().is_empty() {
                     latest_status_line = Some(line.clone());
@@ -447,12 +453,10 @@ fn run_wrapped(parsed: ParsedArgs, kind: Option<SubcommandKind>) -> ExitCode {
         }
         let line_trigger = parsed
             .heartbeat_lines
-            .map(|n| lines_since_heartbeat >= n)
-            .unwrap_or(false);
+            .is_some_and(|n| lines_since_heartbeat >= n);
         let time_trigger = parsed
             .heartbeat_secs
-            .map(|s| last_heartbeat.elapsed() >= Duration::from_secs(s))
-            .unwrap_or(false);
+            .is_some_and(|s| last_heartbeat.elapsed() >= Duration::from_secs(s));
         if line_trigger || time_trigger {
             emit_heartbeat(
                 started,
@@ -618,11 +622,10 @@ fn emit_heartbeat(
     let trailer = if snippet.is_empty() {
         String::new()
     } else {
-        format!(" latest=\"{}\"", snippet)
+        format!(" latest=\"{snippet}\"")
     };
     eprintln!(
-        "[heartbeat {:.0}s stdout={} stderr={} +{} since-last{}]",
-        elapsed, total_stdout, total_stderr, lines_since_last, trailer
+        "[heartbeat {elapsed:.0}s stdout={total_stdout} stderr={total_stderr} +{lines_since_last} since-last{trailer}]"
     );
 }
 
@@ -682,8 +685,8 @@ fn open_log_files(
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis())
         .unwrap_or(0);
-    let stdout_path = log_dir.join(format!("{}-{}.stdout.log", mode, ts));
-    let stderr_path = log_dir.join(format!("{}-{}.stderr.log", mode, ts));
+    let stdout_path = log_dir.join(format!("{mode}-{ts}.stdout.log"));
+    let stderr_path = log_dir.join(format!("{mode}-{ts}.stderr.log"));
     let stdout_file = OpenOptions::new()
         .create(true)
         .write(true)
@@ -713,7 +716,7 @@ mod tests {
     use super::*;
 
     fn s(strs: &[&str]) -> Vec<String> {
-        strs.iter().map(|s| s.to_string()).collect()
+        strs.iter().map(std::string::ToString::to_string).collect()
     }
 
     // ---- CLI parsing ----
@@ -779,11 +782,11 @@ mod tests {
     #[test]
     fn parse_args_missing_value_errors() {
         let err = parse_args(&s(&["--timeout"])).unwrap_err();
-        assert!(err.contains("--timeout requires"), "got: {}", err);
+        assert!(err.contains("--timeout requires"), "got: {err}");
         let err = parse_args(&s(&["--heartbeat"])).unwrap_err();
-        assert!(err.contains("--heartbeat requires"), "got: {}", err);
+        assert!(err.contains("--heartbeat requires"), "got: {err}");
         let err = parse_args(&s(&["--heartbeat-lines"])).unwrap_err();
-        assert!(err.contains("--heartbeat-lines requires"), "got: {}", err);
+        assert!(err.contains("--heartbeat-lines requires"), "got: {err}");
     }
 
     #[test]
@@ -819,7 +822,7 @@ mod tests {
     fn parse_args_passthrough_aliases() {
         for token in ["-p", "-v", "--passthrough"] {
             let p = parse_args(&s(&[token, "build"])).unwrap();
-            assert!(p.passthrough, "{} did not enable passthrough", token);
+            assert!(p.passthrough, "{token} did not enable passthrough");
         }
     }
 
@@ -840,8 +843,7 @@ mod tests {
         assert!(tail.starts_with(" logs.stdout="));
         assert!(
             !tail.contains(&*cwd.to_string_lossy()),
-            "relative tail must not include CWD: {}",
-            tail
+            "relative tail must not include CWD: {tail}"
         );
     }
 
@@ -853,8 +855,7 @@ mod tests {
         let tail = render_logs_tail(Some(&stdout), Some(&stderr), true);
         assert!(
             tail.contains(&*cwd.to_string_lossy()),
-            "absolute tail must include CWD: {}",
-            tail
+            "absolute tail must include CWD: {tail}"
         );
     }
 
