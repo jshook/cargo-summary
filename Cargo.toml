@@ -2,13 +2,15 @@
 name = "cargo-summary"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.88"
+authors = ["Jonathan Shook <jshook@gmail.com>"]
 description = "Concise cargo wrapper with single-line summaries, heartbeats, timeouts, and persistent stdout/stderr capture. Invokable as `cargo summary <subcommand>`."
 license = "Apache-2.0"
 readme = "README.md"
+repository = "https://github.com/jshook/cargo-summary"
+homepage = "https://github.com/jshook/cargo-summary"
 keywords = ["cargo", "cargo-subcommand", "ci", "build-tools"]
 categories = ["development-tools::cargo-plugins", "command-line-utilities"]
-# Not publishing yet — claim later if/when this earns its keep.
-publish = false
 
 [[bin]]
 name = "cargo-summary"
